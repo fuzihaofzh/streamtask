@@ -1,10 +1,10 @@
 # streamline
-**streamline** is a lightweight python parallel framework for parallelizing the computationally intensive piplines. It is similar to Map/Reduce, while is more lightweight.
+**streamline** is a lightweight python parallel framework for parallelizing the computationally intensive pipelines. It is similar to Map/Reduce, while it is more lightweight. It parallelizes each module in the pipeline with a given processing number to make it possible to leverage the different speeds in different modules. It improves the performance especially there are some heavy I/O operations in the pipeline.
 
 ### Example
 Suppose we want to process the data in a pipline with 3 blocks, f1, f2 and f3. We can use the following code to  parallelize the processing.
 
-```
+``` python
 from streamline import StreamLine
 def f1():
     for i in range(1000000):
