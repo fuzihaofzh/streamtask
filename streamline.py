@@ -115,6 +115,7 @@ class StreamLine():
         self.add_module(_add_data_func, args=[items])
 
     def run(self):
+        self.run_mode = "run"
         for i in range(len(self.modules)):
             for _ in range(self.proc_num[i]):
                 c = Process(target=func_wrapper, args=(self.modules[i], self.buffers[i], self.buffers[i + 1], i, self.proc_num, self.finished, self.batch_sizes[i], self.args[i], self.kwargs[i]))
@@ -126,6 +127,7 @@ class StreamLine():
         self.processes.append(c)
         
     def run_serial(self):
+        self.run_mode = "run_serial"
         cnt = 0
         for d in self.modules[0](*self.args[0], **self.kwargs[0]):
             for i in range(1, len(self.modules)):
@@ -143,11 +145,15 @@ class StreamLine():
     def get_results(self):
         results = []
         while self.buffers[-1].qsize() > 0:
-            results.append(self.buffers[-1].get())
+            res = self.buffers[-1].get()
+            if self.run_mode == "run_serial":
+                results.append(res)
+            else:
+                results += res
         return results #[r[0] for r in results]
 
     def get_finish_count(self):
-        return self.buffers[-1].qsize()
+        return self.buffers[-1].qsize() * self.batch_sizes[-1]
 
 
 
