@@ -44,6 +44,7 @@ def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args,
                         logging.info(STREAM_LINE_TAG + "break")
                         break
             except Exception as error:
+                q_in.put(input_data)#return back
                 logging.error(STREAM_LINE_TAG + func.__name__, "Error!")
                 logging.error(STREAM_LINE_TAG + traceback.print_exc())
 
@@ -52,31 +53,35 @@ def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args,
     logging.info(STREAM_LINE_TAG + "Finish" + str(func))
 
 def show_progress(proc_num, modules, buffers, finished, batch_sizes):
-    finished_prev = list(finished)
-    st = time.time()
-    st0 = st
-    while sum(proc_num) > 0:
-        log_str = ""
-        has_progress = False
-        for i in range(len(modules)):
-            finish_inc = finished[i] - finished_prev[i]
-            has_progress = True if finish_inc > 0 else False
-            log_str += "%s: %d, %s, %.1f/s; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] else 'N/A', (finish_inc) / (time.time() - st))
+    try:
         finished_prev = list(finished)
         st = time.time()
-        if not has_progress:
-            continue
-        logging.info(STREAM_LINE_TAG + log_str)
-        time.sleep(1)
-        #sys.stdout.write('\x1b[2K\r')
-        #print("", end='\r')
-        #print(proc_num, finished, [b.qsize() if b is not None else 'na' for b in buffers])
-        logging.info(STREAM_LINE_TAG + str(proc_num))
-        remain_seconds = (st - st0) / max(1, finished[-1]) * (finished[0] - finished[-1])
-        #remain_time = time.strftime('%H:%M:%S', time.gmtime(remain_seconds))
-        current_time = datetime.timedelta(seconds = int(st - st0))
-        remain_time = datetime.timedelta(seconds = int(remain_seconds))
-        logging.info(STREAM_LINE_TAG + "ETA: %s < %s;", current_time, remain_time)
+        st0 = st
+        while sum(proc_num) > 0:
+            log_str = ""
+            has_progress = False
+            for i in range(len(modules)):
+                finish_inc = finished[i] - finished_prev[i]
+                has_progress = True if finish_inc > 0 else False
+                if modules[i] is not None:
+                    log_str += "%s: %d, %s, %.1f/s; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finish_inc) / (time.time() - st))
+            finished_prev = list(finished)
+            st = time.time()
+            if not has_progress:
+                continue
+            logging.info(STREAM_LINE_TAG + log_str)
+            time.sleep(1)
+            #sys.stdout.write('\x1b[2K\r')
+            #print("", end='\r')
+            #print(proc_num, finished, [b.qsize() if b is not None else 'na' for b in buffers])
+            logging.info(STREAM_LINE_TAG + str(proc_num))
+            remain_seconds = (st - st0) / max(1, finished[-1]) * (finished[0] - finished[-1])
+            #remain_time = time.strftime('%H:%M:%S', time.gmtime(remain_seconds))
+            current_time = datetime.timedelta(seconds = int(st - st0))
+            remain_time = datetime.timedelta(seconds = int(remain_seconds))
+            logging.info(STREAM_LINE_TAG + "ETA: %s < %s;", current_time, remain_time)
+    except Exception as error:
+        logging.error(STREAM_LINE_TAG + "show_progress Error!")
         
 def _add_data_func(items):
     for item in items:
