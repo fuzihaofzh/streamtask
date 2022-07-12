@@ -41,16 +41,16 @@ def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args,
                 with proc_num.lock:
                     #print("empty!", func.__name__, q_in.qsize(), proc_num[layer - 1])
                     if q_in.qsize() == 0 and proc_num[layer - 1] <= 0:
-                        logging.info(STREAM_LINE_TAG + "break")
+                        logging.info(f"{STREAM_LINE_TAG} break")
                         break
             except Exception as error:
                 q_in.put(input_data)#return back
-                logging.error(STREAM_LINE_TAG + func.__name__, "Error!")
-                logging.error(STREAM_LINE_TAG + traceback.print_exc())
+                logging.error(f"{STREAM_LINE_TAG} {func.__name__} Error!")
+                logging.error(f"{STREAM_LINE_TAG} {traceback.print_exc()}")
 
     with proc_num.lock:            
         proc_num[layer] -= 1
-    logging.info(STREAM_LINE_TAG + "Finish" + str(func))
+    logging.info(f"{STREAM_LINE_TAG} Finish {str(func)}")
 
 def show_progress(proc_num, modules, buffers, finished, batch_sizes):
     try:
@@ -69,26 +69,26 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes):
             st = time.time()
             if not has_progress:
                 continue
-            logging.info(STREAM_LINE_TAG + log_str)
+            logging.info(f"{STREAM_LINE_TAG} {log_str}")
             time.sleep(1)
             #sys.stdout.write('\x1b[2K\r')
             #print("", end='\r')
             #print(proc_num, finished, [b.qsize() if b is not None else 'na' for b in buffers])
-            logging.info(STREAM_LINE_TAG + str(proc_num))
+            logging.info(f"{STREAM_LINE_TAG} {str(proc_num)}")
             remain_seconds = (st - st0) / max(1, finished[-1]) * (finished[0] - finished[-1])
             #remain_time = time.strftime('%H:%M:%S', time.gmtime(remain_seconds))
             current_time = datetime.timedelta(seconds = int(st - st0))
             remain_time = datetime.timedelta(seconds = int(remain_seconds))
-            logging.info(STREAM_LINE_TAG + "ETA: %s < %s;", current_time, remain_time)
+            logging.info(f"{STREAM_LINE_TAG} ETA: {current_time} < {remain_time}")
     except Exception as error:
-        logging.error(STREAM_LINE_TAG + "show_progress Error!")
+        logging.error(f"{STREAM_LINE_TAG} show_progress Error!")
         
 def _add_data_func(items):
     for item in items:
         yield item
 
 class StreamLine():
-    def __init__(self, batch_size = 1):
+    def __init__(self, batch_size = 1, debug = False):
         self.manager = Manager()
         self.modules = self._get_locked_list(self.manager)
         self.args = []
@@ -99,6 +99,7 @@ class StreamLine():
         self.finished = self._get_locked_list(self.manager)
         self.batch_sizes = self._get_locked_list(self.manager)
         self.default_batch_size = batch_size
+        self.debug = debug
 
     def _get_locked_list(self, manager):
         l = manager.list()
@@ -120,6 +121,12 @@ class StreamLine():
         self.add_module(_add_data_func, args=[items])
 
     def run(self):
+        if self.debug:
+            self.run_serial()
+        else:
+            self.run_parallel()
+
+    def run_parallel(self):
         self.run_mode = "run"
         for i in range(len(self.modules)):
             for _ in range(self.proc_num[i]):
@@ -139,13 +146,13 @@ class StreamLine():
                 #print(self.modules[i].__name__, len(d))
                 d = self.modules[i](d, *self.args[i], **self.kwargs[i])
             self.buffers[-1].put(d)
-            logging.info(STREAM_LINE_TAG + "Finish: %d", cnt)
+            logging.info(f"{STREAM_LINE_TAG} Finish: {cnt}")
             cnt += 1
         
     def join(self):
         for p in self.processes:
             p.join()
-            logging.info("%s %s Finish", STREAM_LINE_TAG, str(p))
+            logging.info(f"{STREAM_LINE_TAG} {str(p)} Finish")
 
     def get_results(self):
         results = []
@@ -180,7 +187,7 @@ def f3(n):
     return n + 1
 
 if __name__ == "__main__":
-    sl = StreamLine()
+    sl = StreamLine(debug = False)
     sl.add_module(f1, 1)
     sl.add_module(f2, 2, args = [0.5], kwargs = {'third' : 0.02})
     sl.add_module(f3, 2)
@@ -188,5 +195,4 @@ if __name__ == "__main__":
     sl.join()
     show_progress(sl.proc_num, sl.modules, sl.buffers, sl.finished, sl.batch_sizes)
     print(sl.get_results())
-
 
