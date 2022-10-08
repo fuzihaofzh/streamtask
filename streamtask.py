@@ -10,7 +10,7 @@ import traceback
 import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-STREAM_LINE_TAG = "[Streamline]"
+STREAM_LINE_TAG = "[StreamTask]"
 
 def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args, kwargs):
     if q_in is None:
@@ -87,7 +87,7 @@ def _add_data_func(items):
     for item in items:
         yield item
 
-class StreamLine():
+class StreamTask():
     def __init__(self, batch_size = 1, debug = False):
         self.manager = Manager()
         self.modules = self._get_locked_list(self.manager)
@@ -187,7 +187,7 @@ def f3(n):
     return n + 1
 
 if __name__ == "__main__":
-    sl = StreamLine(debug = False)
+    sl = StreamTask(debug = False)
     sl.add_module(f1, 1)
     sl.add_module(f2, 2, args = [0.5], kwargs = {'third' : 0.02})
     sl.add_module(f3, 2)
