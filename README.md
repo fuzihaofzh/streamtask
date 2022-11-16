@@ -19,7 +19,7 @@ def f3(n):
 if __name__ == "__main__":
     sl = StreamTask()
     sl.add_module(f1, 2) # use 2 process to compute
-    sl.add_module(f2, 2, args = [0.5], kwargs = {'third' : 0.02})
+    sl.add_module(f2, 2, args = [0.5], third = 0.02)
     sl.add_module(f3, 2)
     #sl.run_serial()
     sl.run()

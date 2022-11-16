@@ -64,7 +64,7 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes):
                 finish_inc = finished[i] - finished_prev[i]
                 has_progress = True if finish_inc > 0 else False
                 if modules[i] is not None:
-                    log_str += "%s: %d, %s, %.1f/s; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finish_inc) / (time.time() - st))
+                    log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
             finished_prev = list(finished)
             st = time.time()
             if not has_progress:
@@ -79,7 +79,7 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes):
             #remain_time = time.strftime('%H:%M:%S', time.gmtime(remain_seconds))
             current_time = datetime.timedelta(seconds = int(st - st0))
             remain_time = datetime.timedelta(seconds = int(remain_seconds))
-            logging.info(f"{STREAM_LINE_TAG} ETA: {current_time} < {remain_time}")
+            logging.info(f"{STREAM_LINE_TAG} ETA: {current_time} ⇦ {remain_time}")
     except Exception as error:
         logging.error(f"{STREAM_LINE_TAG} show_progress Error!")
         
@@ -106,7 +106,7 @@ class StreamTask():
         l.lock = manager.Lock()
         return l
 
-    def add_module(self, func, proc_num = 1, batch_size = None, args = [], kwargs = {}):
+    def add_module(self, func, proc_num = 1, batch_size = None, args = [], **kwargs):
         self.modules.append(func)
         self.proc_num.append(proc_num)
         self.buffers.append(self.manager.Queue())
@@ -174,8 +174,8 @@ class StreamTask():
 
 def f1():
     import time
-    for i in range(10):
-        #time.sleep(0.00000000000000000002)
+    for i in range(10000000):
+        time.sleep(0.0000002)
         yield i * 2
 
 def f2(n, add, third = 0.01):
@@ -189,7 +189,7 @@ def f3(n):
 if __name__ == "__main__":
     sl = StreamTask(debug = False)
     sl.add_module(f1, 1)
-    sl.add_module(f2, 2, args = [0.5], kwargs = {'third' : 0.02})
+    sl.add_module(f2, 2, args = [0.5], third = 0.02)
     sl.add_module(f3, 2)
     sl.run()
     sl.join()
