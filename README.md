@@ -5,24 +5,33 @@
 Suppose we want to process the data in a pipline with 3 blocks, f1, f2 and f3. We can use the following code to  parallelize the processing.
 
 ``` python
-from streamtask import StreamTask
-def f1():
-    for i in range(1000000):
+def f1(total):
+    import time
+    for i in range(total):
+        time.sleep(0.002)
         yield i * 2
 
 def f2(n, add, third = 0.01):
+    time.sleep(0.02)
     return n + add + third
 
-def f3(n):
+def f3_the_final(n):
+    time.sleep(0.03)
     return n + 1
 
 if __name__ == "__main__":
-    sl = StreamTask()
-    sl.add_module(f1, 2) # use 2 process to compute
+    total = 10000
+    sl = StreamTask(parallel = False, total = total)
+    sl.add_module(f1, 1, total = total)
     sl.add_module(f2, 2, args = [0.5], third = 0.02)
-    sl.add_module(f3, 2)
-    #sl.run_serial()
-    sl.run()
+    sl.add_module(f3_the_final, 2)
+    sl.run(parallel = True)
     sl.join()
     print(sl.get_results())
+```
+
+```
+f1 (1):  17%|███████▎                                   | 1692/10000 [00:04<00:19, 419.46it/s]
+f2 (2):  23%|██████████▋                                   | 394/1690 [00:04<00:13, 97.68it/s]
+f3_the_final (2):  67%|████████████████████████▋            | 262/392 [00:04<00:02, 64.96it/s]
 ```
