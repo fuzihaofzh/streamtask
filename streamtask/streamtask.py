@@ -8,9 +8,30 @@ import queue
 import datetime
 import traceback
 import logging
+from tqdm.auto import tqdm
+import os
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 STREAM_LINE_TAG = "[StreamTask]"
+
+def stream_reader(file, bsize = 50, format = "plain"):
+    batch = []
+    cnt = 0
+    # gz file is 5x faster than bz2.
+    if format == "plain":
+        reader = open(file, "rb")
+    elif format == "bz2":
+        reader = os.popen("pbzip2 -dc %s "%file)
+    elif format == "gz":
+        reader = os.popen("pigz -dc %s"%file)
+    for line in reader:
+        batch.append(line)
+        cnt += 1
+        if len(batch) >= bsize:
+            res = batch
+            batch = []
+            yield res
+    yield batch
 
 def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args, kwargs):
     if q_in is None:
@@ -52,11 +73,12 @@ def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args,
         proc_num[layer] -= 1
     logging.info(f"{STREAM_LINE_TAG} Finish {str(func)}")
 
-def show_progress(proc_num, modules, buffers, finished, batch_sizes):
+def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
     try:
         finished_prev = list(finished)
         st = time.time()
         st0 = st
+        pbars = [tqdm(total=100, desc=f"{modules[i].__name__} ({proc_num[i]})") for i in range(len(modules))]
         while sum(proc_num) > 0:
             log_str = ""
             has_progress = False
@@ -64,31 +86,33 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes):
                 finish_inc = finished[i] - finished_prev[i]
                 has_progress = True if finish_inc > 0 else False
                 if modules[i] is not None:
-                    log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
+                    #log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
+                    pbars[i].n = finished[i]
+                    pbars[i].total = (buffers[i].qsize() * batch_sizes[i] + finished[i] if buffers[i] and batch_sizes[i] else total) 
+                    pbars[i].refresh()
             finished_prev = list(finished)
             st = time.time()
             if not has_progress:
                 continue
-            logging.info(f"{STREAM_LINE_TAG} {log_str}")
+            #logging.info(f"{STREAM_LINE_TAG} {log_str}")
             time.sleep(1)
             #sys.stdout.write('\x1b[2K\r')
             #print("", end='\r')
             #print(proc_num, finished, [b.qsize() if b is not None else 'na' for b in buffers])
-            logging.info(f"{STREAM_LINE_TAG} {str(proc_num)}")
             remain_seconds = (st - st0) / max(1, finished[-1]) * (finished[0] - finished[-1])
             #remain_time = time.strftime('%H:%M:%S', time.gmtime(remain_seconds))
             current_time = datetime.timedelta(seconds = int(st - st0))
             remain_time = datetime.timedelta(seconds = int(remain_seconds))
-            logging.info(f"{STREAM_LINE_TAG} ETA: {current_time} ⇦ {remain_time}")
+            #logging.info(f"{STREAM_LINE_TAG} {str(proc_num)} ETA: {current_time} ⇦ {remain_time}")
     except Exception as error:
-        logging.error(f"{STREAM_LINE_TAG} show_progress Error!")
+        logging.error(f"{STREAM_LINE_TAG} show_progress Error! \n {error}")
         
 def _add_data_func(items):
     for item in items:
         yield item
 
 class StreamTask():
-    def __init__(self, batch_size = 1, debug = False):
+    def __init__(self, batch_size = 1, total = None, parallel = True):
         self.manager = Manager()
         self.modules = self._get_locked_list(self.manager)
         self.args = []
@@ -99,7 +123,8 @@ class StreamTask():
         self.finished = self._get_locked_list(self.manager)
         self.batch_sizes = self._get_locked_list(self.manager)
         self.default_batch_size = batch_size
-        self.debug = debug
+        self.parallel = parallel
+        self.total = total
 
     def _get_locked_list(self, manager):
         l = manager.list()
@@ -120,8 +145,9 @@ class StreamTask():
     def add_data(self, items):
         self.add_module(_add_data_func, args=[items])
 
-    def run(self):
-        if self.debug:
+    def run(self, parallel = None):
+        parallel = parallel if parallel is not None else self.parallel
+        if not parallel:
             self.run_serial()
         else:
             self.run_parallel()
@@ -134,7 +160,7 @@ class StreamTask():
                 c.start()
                 self.processes.append(c)
 
-        c = Process(target=show_progress, args = (self.proc_num, self.modules, self.buffers, self.finished, self.batch_sizes))
+        c = Process(target=show_progress, args = (self.proc_num, self.modules, self.buffers, self.finished, self.batch_sizes, self.total))
         c.start()
         self.processes.append(c)
         
@@ -172,27 +198,27 @@ class StreamTask():
     
 #=============================TEST=============================
 
-def f1():
+def f1(total):
     import time
-    for i in range(10000000):
-        time.sleep(0.0000002)
+    for i in range(total):
+        time.sleep(0.002)
         yield i * 2
 
 def f2(n, add, third = 0.01):
-    #time.sleep(0.000000000000000001)
+    time.sleep(0.02)
     return n + add + third
 
-def f3(n):
-    #time.sleep(0.00000000000000000001)
+def f3_the_final(n):
+    time.sleep(0.03)
     return n + 1
 
 if __name__ == "__main__":
-    sl = StreamTask(debug = False)
-    sl.add_module(f1, 1)
+    total = 10000
+    sl = StreamTask(parallel = False, total = total)
+    sl.add_module(f1, 1, total = total)
     sl.add_module(f2, 2, args = [0.5], third = 0.02)
-    sl.add_module(f3, 2)
-    sl.run()
+    sl.add_module(f3_the_final, 2)
+    sl.run(parallel = True)
     sl.join()
-    show_progress(sl.proc_num, sl.modules, sl.buffers, sl.finished, sl.batch_sizes)
     print(sl.get_results())
 
