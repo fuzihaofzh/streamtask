@@ -33,6 +33,12 @@ def stream_reader(file, bsize = 50, format = "plain"):
             yield res
     yield batch
 
+def stream_writer(content, file_path, filemode = "w"):
+    if not hasattr(file_path, 'f'):
+        stream_writer.f = open(file_path, filemode)
+    stream_writer.f.write(content)
+    #save_id2name.f.flush()
+
 def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args, kwargs):
     if q_in is None:
         bucket = []
