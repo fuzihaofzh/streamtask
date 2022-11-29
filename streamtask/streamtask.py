@@ -19,6 +19,8 @@ def stream_reader(file, bsize = 50, format = "plain"):
     cnt = 0
     # gz file is 5x faster than bz2.
     if format == "plain":
+        reader = open(file, "r")
+    elif format == "byte":
         reader = open(file, "rb")
     elif format == "bz2":
         reader = os.popen("pbzip2 -dc %s "%file)
@@ -33,9 +35,9 @@ def stream_reader(file, bsize = 50, format = "plain"):
             yield res
     yield batch
 
-def stream_writer(content, file_path, filemode = "w"):
-    if not hasattr(file_path, 'f'):
-        stream_writer.f = open(file_path, filemode)
+def stream_writer(content, file, filemode = "w"):
+    if not hasattr(stream_writer, 'f'):
+        stream_writer.f = open(file, filemode)
     stream_writer.f.write(content)
     #save_id2name.f.flush()
 
