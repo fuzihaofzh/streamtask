@@ -10,22 +10,26 @@ import traceback
 import logging
 from tqdm.auto import tqdm
 import os
+import itertools
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 STREAM_LINE_TAG = "[StreamTask]"
 
-def stream_reader(file, bsize = 50, format = "plain"):
+def stream_reader(file = None, data = None, bsize = 50, format = "plain"):
     batch = []
     cnt = 0
     # gz file is 5x faster than bz2.
-    if format == "plain":
-        reader = open(file, "r")
-    elif format == "byte":
-        reader = open(file, "rb")
-    elif format == "bz2":
-        reader = os.popen("pbzip2 -dc %s "%file)
-    elif format == "gz":
-        reader = os.popen("pigz -dc %s"%file)
+    if file is not None:
+        if format == "plain":
+            reader = open(file, "r")
+        elif format == "byte":
+            reader = open(file, "rb")
+        elif format == "bz2":
+            reader = os.popen("pbzip2 -dc %s "%file)
+        elif format == "gz":
+            reader = os.popen("pigz -dc %s"%file)
+    elif data is not None:
+        reader = data
     for line in reader:
         batch.append(line)
         cnt += 1
@@ -192,10 +196,11 @@ class StreamTask():
         results = []
         while self.buffers[-1].qsize() > 0:
             res = self.buffers[-1].get()
-            if self.run_mode == "run_serial":
-                results.append(res)
-            else:
-                results += res
+            results.append(res)
+        if self.run_mode == "run_serial":
+            pass
+        else:
+            results = list(itertools.chain(*results))
         return results #[r[0] for r in results]
 
     def get_finish_count(self):
