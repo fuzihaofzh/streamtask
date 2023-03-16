@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 import os
 import itertools
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.ERROR)
 STREAM_LINE_TAG = "[StreamTask]"
 
 def stream_reader(file = None, data = None, bsize = 50, format = "plain"):
@@ -90,7 +90,8 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
         finished_prev = list(finished)
         st = time.time()
         st0 = st
-        pbars = [tqdm(total=100, desc=f"{modules[i].__name__} ({proc_num[i]})") for i in range(len(modules))]
+        pbars = [tqdm(total=100, desc=f"{modules[i].__name__} ({proc_num[i]}/{proc_num[i]})") for i in range(len(modules))]
+        total_proc_num = [proc_num[i] for i in range(len(modules))]
         while sum(proc_num) > 0:
             log_str = ""
             has_progress = False
@@ -101,6 +102,7 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
                     #log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
                     pbars[i].n = finished[i]
                     pbars[i].total = (buffers[i].qsize() * batch_sizes[i] + finished[i] if buffers[i] and batch_sizes[i] else total) 
+                    pbars[i].desc = f"{modules[i].__name__} ({proc_num[i]}/{total_proc_num[i]})"
                     pbars[i].refresh()
             finished_prev = list(finished)
             st = time.time()
@@ -124,7 +126,7 @@ def _add_data_func(items):
         yield item
 
 class StreamTask():
-    def __init__(self, batch_size = 1, total = None, parallel = True):
+    def __init__(self, batch_size = 1, total = None, parallel = True, verbose = False):
         self.manager = Manager()
         self.modules = self._get_locked_list(self.manager)
         self.args = []
@@ -137,6 +139,8 @@ class StreamTask():
         self.default_batch_size = batch_size
         self.parallel = parallel
         self.total = total
+        if verbose:
+            logger.setLevel(logging.INFO)
 
     def _get_locked_list(self, manager):
         l = manager.list()
@@ -226,7 +230,7 @@ def f3_the_final(n):
     return n + 1
 
 if __name__ == "__main__":
-    total = 10000
+    total = 1000
     sl = StreamTask(parallel = False, total = total)
     sl.add_module(f1, 1, total = total)
     sl.add_module(f2, 2, args = [0.5], third = 0.02)
