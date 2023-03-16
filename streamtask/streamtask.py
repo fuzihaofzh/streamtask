@@ -15,7 +15,9 @@ logger = logging.getLogger()
 logger.setLevel(logging.ERROR)
 STREAM_LINE_TAG = "[StreamTask]"
 
-def stream_reader(file = None, data = None, bsize = 50, format = "plain"):
+def stream_reader(file = None, data = None, batch_size = 50, format = "plain"):
+    if file is not None and data is not None:
+        logging.error(f"{STREAM_LINE_TAG} Only one of file/data should be set.")
     batch = []
     cnt = 0
     # gz file is 5x faster than bz2.
@@ -30,46 +32,40 @@ def stream_reader(file = None, data = None, bsize = 50, format = "plain"):
             reader = os.popen("pigz -dc %s"%file)
     elif data is not None:
         reader = data
+    else:
+        logging.error(f"{STREAM_LINE_TAG} Either file or data should be set a value.")
     for line in reader:
         batch.append(line)
         cnt += 1
-        if len(batch) >= bsize:
+        if batch_size is None:
+            yield line
+        elif len(batch) >= batch_size:
             res = batch
             batch = []
             yield res
-    yield batch
+    if batch_size is not None and batch:
+        yield batch
 
-def stream_writer(content, file, filemode = "w"):
-    if not hasattr(stream_writer, 'f'):
-        stream_writer.f = open(file, filemode)
-    stream_writer.f.write(content)
-    #save_id2name.f.flush()
+def stream_writer(content, file = None, filemode = "w"):
+    if file is not None:
+        if not hasattr(stream_writer, 'f'):
+            stream_writer.f = open(file, filemode)
+        stream_writer.f.write(content)
 
-def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args, kwargs):
-    if q_in is None:
-        bucket = []
+def func_wrapper(func, q_in, q_out, layer, proc_num, finished, args, kwargs):
+    if q_in is None:#First queue, without input
         for d in func(*args, **kwargs):
-            bucket.append(d)
-            tmp = finished[layer]
-            if len(bucket) >= batch_size:
-                q_out.put(bucket)
-                with finished.lock:
-                    finished[layer] += len(bucket)
-                bucket = []
-        if len(bucket) > 0:
-            q_out.put(bucket)
+            q_out.put(d)
             with finished.lock:
-                finished[layer] += len(bucket)
-    else:
+                finished[layer] += 1
+    else: # Others with input
         while True:
             try:
-                bucket = []
                 input_data = q_in.get(timeout = 2)
-                for d in input_data:
-                    bucket.append(func(d, *args, **kwargs))
+                r = func(input_data, *args, **kwargs)
+                q_out.put(r)
                 with finished.lock:
-                    finished[layer] += len(input_data)
-                q_out.put(bucket)
+                    finished[layer] += 1
             except queue.Empty:
                 with proc_num.lock:
                     #print("empty!", func.__name__, q_in.qsize(), proc_num[layer - 1])
@@ -85,7 +81,7 @@ def func_wrapper(func, q_in, q_out, layer, proc_num, finished, batch_size, args,
         proc_num[layer] -= 1
     logging.info(f"{STREAM_LINE_TAG} Finish {str(func)}")
 
-def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
+def show_progress(proc_num, modules, buffers, finished, total):
     try:
         finished_prev = list(finished)
         st = time.time()
@@ -101,7 +97,7 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
                 if modules[i] is not None:
                     #log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
                     pbars[i].n = finished[i]
-                    pbars[i].total = (buffers[i].qsize() * batch_sizes[i] + finished[i] if buffers[i] and batch_sizes[i] else total) 
+                    pbars[i].total = (buffers[i].qsize() + finished[i] if buffers[i] else total) 
                     pbars[i].desc = f"{modules[i].__name__} ({proc_num[i]}/{total_proc_num[i]})"
                     pbars[i].refresh()
             finished_prev = list(finished)
@@ -121,12 +117,8 @@ def show_progress(proc_num, modules, buffers, finished, batch_sizes, total):
     except Exception as error:
         logging.error(f"{STREAM_LINE_TAG} show_progress Error! \n {error}")
         
-def _add_data_func(items):
-    for item in items:
-        yield item
-
 class StreamTask():
-    def __init__(self, batch_size = 1, total = None, parallel = True, verbose = False):
+    def __init__(self, total = None, parallel = True, verbose = False, aggregate = True):
         self.manager = Manager()
         self.modules = self._get_locked_list(self.manager)
         self.args = []
@@ -135,10 +127,10 @@ class StreamTask():
         self.processes = []
         self.proc_num = self._get_locked_list(self.manager)
         self.finished = self._get_locked_list(self.manager)
-        self.batch_sizes = self._get_locked_list(self.manager)
-        self.default_batch_size = batch_size
+        self.aggregate_results = []
         self.parallel = parallel
         self.total = total
+        self.aggregate = aggregate
         if verbose:
             logger.setLevel(logging.INFO)
 
@@ -147,21 +139,28 @@ class StreamTask():
         l.lock = manager.Lock()
         return l
 
-    def add_module(self, func, proc_num = 1, batch_size = None, args = [], **kwargs):
+    def add_module(self, func, proc_num = 1, args = [], **kwargs):
         self.modules.append(func)
         self.proc_num.append(proc_num)
         self.buffers.append(self.manager.Queue())
         self.finished.append(0)
-        if batch_size is None:
-            batch_size = self.default_batch_size
-        self.batch_sizes.append(batch_size)
         self.args.append(args)
         self.kwargs.append(kwargs)
 
-    def add_data(self, items):
-        self.add_module(_add_data_func, args=[items])
+    def add_data(self, file = None, data = None, batch_size = 50, format = "plain"):
+        if data is not None:
+            self.total = len(data) if batch_size is None else (len(data) // batch_size if len(data) % batch_size == 0 else len(data) // batch_size + 1)
+        if batch_size is not None:
+            self.batched_data = True
+        self.add_module(stream_reader, args=[file, data, batch_size, format])
+
+    def add_writer(self, file = None, filemode = "w"):
+        self.add_module(stream_writer, args=[file, filemode])
 
     def run(self, parallel = None):
+        if sys.gettrace():
+            parallel = False
+            logging.error(f"{STREAM_LINE_TAG} In Debug mode, force use serial.")
         parallel = parallel if parallel is not None else self.parallel
         if not parallel:
             self.run_serial()
@@ -172,11 +171,11 @@ class StreamTask():
         self.run_mode = "run"
         for i in range(len(self.modules)):
             for _ in range(self.proc_num[i]):
-                c = Process(target=func_wrapper, args=(self.modules[i], self.buffers[i], self.buffers[i + 1], i, self.proc_num, self.finished, self.batch_sizes[i], self.args[i], self.kwargs[i]))
+                c = Process(target=func_wrapper, args=(self.modules[i], self.buffers[i], self.buffers[i + 1], i, self.proc_num, self.finished, self.args[i], self.kwargs[i]))
                 c.start()
                 self.processes.append(c)
 
-        c = Process(target=show_progress, args = (self.proc_num, self.modules, self.buffers, self.finished, self.batch_sizes, self.total))
+        c = Process(target=show_progress, args = (self.proc_num, self.modules, self.buffers, self.finished, self.total))
         c.start()
         self.processes.append(c)
         
@@ -192,25 +191,30 @@ class StreamTask():
             cnt += 1
         
     def join(self):
+        while True:
+            while self.buffers[-1].qsize() > 0:
+                res = self.buffers[-1].get()
+                self.aggregate_results.append(res)
+            if not any([p.is_alive() for p in self.processes]):
+                break
         for p in self.processes:
             p.join()
             logging.info(f"{STREAM_LINE_TAG} {str(p)} Finish")
 
     def get_results(self):
-        results = []
         while self.buffers[-1].qsize() > 0:
             res = self.buffers[-1].get()
-            results.append(res)
-        if self.run_mode == "run_serial":
+            self.aggregate_results.append(res)
+        if hasattr(self, "batched_data") and self.batched_data:
+            self.aggregate_results = list(itertools.chain(*self.aggregate_results))
+        """if self.run_mode == "run_serial":
             pass
         else:
-            results = list(itertools.chain(*results))
-        return results #[r[0] for r in results]
+            self.aggregate_results = list(itertools.chain(*self.aggregate_results))"""
+        return self.aggregate_results
 
     def get_finish_count(self):
-        return self.buffers[-1].qsize() * self.batch_sizes[-1]
-
-
+        return self.buffers[-1].qsize() 
 
     
 #=============================TEST=============================
@@ -222,20 +226,28 @@ def f1(total):
         yield i * 2
 
 def f2(n, add, third = 0.01):
-    time.sleep(0.02)
-    return n + add + third
+    time.sleep(0.002)
+    if type(n) is not list:
+        return n + add + third
+    else:
+        return [nn + add + third for nn in n ]
 
 def f3_the_final(n):
-    time.sleep(0.03)
-    return n + 1
+    time.sleep(0.003)
+    if type(n) is not list:
+        return n + 1
+    else:
+        return [nn + 1 for nn in n ]
 
 if __name__ == "__main__":
-    total = 1000
-    sl = StreamTask(parallel = False, total = total)
-    sl.add_module(f1, 1, total = total)
-    sl.add_module(f2, 2, args = [0.5], third = 0.02)
-    sl.add_module(f3_the_final, 2)
-    sl.run(parallel = True)
-    sl.join()
-    print(sl.get_results())
+    total = 100
+    stk = StreamTask(total = total)
+    #stk.add_module(f1, 1, total = total)
+    stk.add_data(data = range(total), batch_size=21)
+    stk.add_module(f2, 2, args = [0.5], third = 0.02)
+    stk.add_module(f3_the_final, 2)
+    stk.run(parallel = True)
+    stk.join()
+    res = stk.get_results()
+    print(res)
 
