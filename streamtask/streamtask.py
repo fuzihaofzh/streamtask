@@ -147,12 +147,17 @@ class StreamTask():
         self.args.append(args)
         self.kwargs.append(kwargs)
 
-    def add_data(self, file = None, data = None, batch_size = 50, format = "plain"):
-        if data is not None:
-            self.total = len(data) if batch_size is None else (len(data) // batch_size if len(data) % batch_size == 0 else len(data) // batch_size + 1)
+    def add_data(self, data, batch_size = None):
+        self.total = len(data) if batch_size is None else (len(data) // batch_size if len(data) % batch_size == 0 else len(data) // batch_size + 1)
         if batch_size is not None:
             self.batched_data = True
-        self.add_module(stream_reader, args=[file, data, batch_size, format])
+        self.add_module(stream_reader, args=[None, data, batch_size, format])
+
+    def add_file(self, file = None, batch_size = None, format = "plain"):
+        if batch_size is not None:
+            self.batched_data = True
+        self.add_module(stream_reader, args=[file, None, batch_size, format])
+
 
     def add_writer(self, file = None, filemode = "w"):
         self.add_module(stream_writer, args=[file, filemode])
