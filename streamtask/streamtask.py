@@ -97,7 +97,8 @@ def show_progress(proc_num, modules, buffers, finished, total):
                 if modules[i] is not None:
                     #log_str += "%s: [%d ⇦ %s, %.1f/s]; "%(modules[i].__name__, finished[i], str(buffers[i].qsize() * batch_sizes[i]) if buffers[i] and batch_sizes[i] else 'N/A', (finished[i]) / (time.time() - st0))
                     pbars[i].n = finished[i]
-                    pbars[i].total = (buffers[i].qsize() + proc_num[i] + finished[i] if buffers[i] else total) 
+                    acnt = buffers[i].qsize() + proc_num[i] + finished[i] if buffers[i] else total
+                    pbars[i].total = min(acnt, total)
                     pbars[i].desc = f"{modules[i].__name__} ({proc_num[i]}/{total_proc_num[i]})"
                     pbars[i].refresh()
             finished_prev = list(finished)
